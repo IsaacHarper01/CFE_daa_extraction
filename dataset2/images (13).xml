@@ -1,0 +1,26 @@
+<annotation>
+	<folder>dataset2</folder>
+	<filename>images (13).jpg</filename>
+	<path>/home/isaac/Isaac/Xira/CFE_data_extraction/dataset2/images (13).jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>290</width>
+		<height>174</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>telmex</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>29</xmin>
+			<ymin>84</ymin>
+			<xmax>97</xmax>
+			<ymax>120</ymax>
+		</bndbox>
+	</object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+	<folder>dataset2</folder>
+	<filename>IMG_20230418_115845.jpg</filename>
+	<path>/home/isaac/Isaac/Xira/CFE_data_extraction/dataset2/IMG_20230418_115845.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>3280</width>
+		<height>1476</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>cfe</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>559</xmin>
+			<ymin>140</ymin>
+			<xmax>900</xmax>
+			<ymax>332</ymax>
+		</bndbox>
+	</object>
+</annotation>
