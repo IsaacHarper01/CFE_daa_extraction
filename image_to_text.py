@@ -3,7 +3,9 @@ import cv2
 import numpy as np
 import pandas
 from pyzbar.pyzbar import decode
-
+from math import tan
+import pytesseract
+ 
 
 class text_detector():
     def __init__(self):
@@ -15,13 +17,15 @@ class text_detector():
         self.model = torch.hub.load('/home/isaac/Isaac/Xira/CFE_data_extraction/yolov5', 'custom', path='/home/isaac/Isaac/Xira/CFE_data_extraction/yolov5/weights/yolov5s_telmex.pt',source='local')
         #python dictionary with information about the cfe or telmex logo detected
         self.logo = None
+        self.image=None
 
     def detect_elements(self,image_path):
         #function who call the model yoloV5 and indentify the code bars, telmex and cfe logos
         # and returns a pandas data frame with all the information  
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image,cv2.COLOR_BGRA2GRAY)
-        #image = cv2.resize(image,(1150,520))
+        #image = cv2.resize(image,(1640,738))
+        self.image = image
         data = decode(image) 
         detect = self.model(image)
         info = detect.pandas().xyxy[0]  # im1 predictions
@@ -66,24 +70,162 @@ class text_detector():
             print('No se ha detectado ningun recibo')
     
     def cut_cfe_vertical(self,df):
+        #get the cut points for the first image that contains the name and addres
+        
         dfCFE = df.loc[df['name']== 'cfe']
-        xc,yc = int(dfCFE['xmax'][0]),int(dfCFE['ymax'][0])
+        xclr,yclr = int(dfCFE.iloc[0,2]),int(dfCFE.iloc[0,3])
+        xcul,ycul = int(dfCFE.iloc[0,0]),int(dfCFE.iloc[0,1])
+        xcll,ycll = xcul, yclr
+        xcur,ycur = xclr, ycul
+        #width and heigth of the CFE logo
+        cfe_higth = yclr-ycul
+        cfe_width = xcur-xcul
+        #edge points 
+        xcpul,ycpul = int(xcll-(cfe_width*0.5)),int(ycll+(cfe_higth*0.5))
+        xcplr,ycplr = int(xclr+cfe_width), int(ycpul+(1.7*cfe_higth))
+        xcpur,ycpur = xcplr,ycpul
+        xcpll,ycpll = xcpul, ycplr
+        
+        #crop the image using the points obtained before
+        points = np.array([(xcpul, ycpul), (xcpur, ycpur), (xcplr, ycplr), (xcpll, ycpll)], np.int32)
+        mask = np.zeros_like(self.image)
+        cv2.fillPoly(mask, [points], (255, 255, 255))
+        result = cv2.bitwise_and(self.image, mask)
+        x, y, w, h = cv2.boundingRect(points)
+        #croped image
+        result = result[y:y+h, x:x+w]
+        #result = cv2.resize(result, (w, h))
+        # cv2.imshow("image",result)
+        # cv2.waitKey(10000)
+        # cv2.destroyAllWindows()
+        return result
+
         if df.isin(['QRCODE']).any().any():
             dfQR = df.loc[df.isin(['QRCODE']).any(axis=1)]
-            #print(dfQR)
-            if len(dfQR)==1:
-                #print('1 QR code')
-                xq, yq = int(dfQR['xmax'][1]),int(dfQR['ymax'][1])
-        print(xc,yc)
-        print(xq,yq)
+            #if qr in the tallest position
+            xqlr, yqlr = int(dfQR.iloc[0,2]),int(dfQR.iloc[0,3])#xmax,ymax
+            xqul, yqul = int(dfQR.iloc[0,0]),int(dfQR.iloc[0,1])#xmin,ymin
+            xqll, yqll = xqul, yqlr
+            xqur, yqur = xqlr , yqul
+            QR_hight = yqlr-yqul
+            print(QR_hight/cfe_higth)
+        
+    
+    def find_point(self,alpha,beta,gama,point1,point2):
+        #xc=point2[0],yc=point2[1],xq=point1[0],yq=point1[1]
+        ma =  (point1[1]-point2[1])/(point1[0]-point2[0])
+        slope = lambda angle,m1: (tan(angle)+m1)/(1-(tan(angle)*m1))
+        mc = slope(beta,ma)
+        mb = slope(180-gama,mc)
+        print(ma,mb,mc)
+        # xi = int(((-mb*point2[0])+point2[1]-point1[1]+(mc*point1[0]))/(mc-mb))
+        # yi = int((mb*xi)+(-mb*point2[0])+point2[1])
+        # #print(xi,yi)
+        # return xi,-yi
+
+    def turn_image(self,image):
+        transposed = cv2.transpose(image)
+        vertical = cv2.flip(transposed,0)#0= turn the image 90°, 1 turn the image -90°
+        cv2.imshow('image',vertical)
+        cv2.waitKey(10000)
+        cv2.destroyAllWindows()
+
+    def cut_telmex_vertical(self,df):
+        if df.isin(['telmex']).any().any():
+            dftel = df.loc[df['name']== 'telmex']
+            if df.isin(['barras']).any().any():
+                #detected points in the code bar
+                dfbars = df.loc[df.isin(['barras']).any(axis=1)]
+                xlr,ylr = int(dfbars.iloc[0,2]), int(dfbars.iloc[0,3])#xmax,ymax
+                cpxll,cpyll = int(dfbars.iloc[0,0]), int(dfbars.iloc[0,1])#xmin,ymin:superior left point in the code bar deteced
+                cpxlr,cpylr = xlr,cpyll #superior right point in the bar code detected
+                
+                #detected points in the telmex logo
+                xtlr,ytlr = int(dftel.iloc[0,2]), int(dftel.iloc[0,3])#xmax,ymax
+                xtul,ytul = int(dftel.iloc[0,0]), int(dftel.iloc[0,1])#xmin,ymin
+                cpxul,cpyul = xtul,ytlr #cut point uper left
+                cpxur,cpyur = cpxlr, ytlr #cut point uper right
+                disty = int(1.5*(ytlr-ytul))
             
- 
+                #crop the image using the points obtained before
+                points = np.array([(cpxul, cpyul+disty), (cpxur, cpyur+disty), (cpxlr, cpylr), (cpxll, cpyll)], np.int32)
+                mask = np.zeros_like(self.image)
+                cv2.fillPoly(mask, [points], (255, 255, 255))
+                result = cv2.bitwise_and(self.image, mask)
+                x, y, w, h = cv2.boundingRect(points)
+                #croped image
+                result = result[y:y+h, x:x+w]
+                result = cv2.resize(result, (w, h))
+                return result
+            
+        if df.isin(['barras']).any().any():
+            dfbars = df.loc[df.isin(['barras']).any(axis=1)]
+            xlr,ylr = int(dfbars.iloc[0,2]), int(dfbars.iloc[0,3])
+            cpxll,cpyll = int(dfbars.iloc[0,0]), int(dfbars.iloc[0,1])#superior left point in the code bar deteced
+            cpxlr,cpylr = xlr,cpyll #superior right point in the bar code detected
+            disty = int(2*(ylr-cpyll))
+            cpxul,cpyul = cpxll, cpyll-disty
+            cpxur, cpyur = cpxlr, cpylr-disty
+            #crop the image using the points obtained before
 
+            points = np.array([(cpxul, cpyul), (cpxur, cpyur), (cpxlr, cpylr), (cpxll, cpyll)], np.int32)
+            mask = np.zeros_like(self.image)
+            cv2.fillPoly(mask, [points], (255, 255, 255))
+            result = cv2.bitwise_and(self.image, mask)
+            x, y, w, h = cv2.boundingRect(points)
+            #croped image
+            result = result[y:y+h, x:x+w]
+            result = cv2.resize(result, (w, h))
+            return result
 
+    def cut_telmex_horizontal(self,df):
+         if df.isin(['telmex']).any().any():
+            dftel = df.loc[df['name']== 'telmex']
+            if df.isin(['barras']).any().any():
+                #detected points in the code bar
+                dfbars = df.loc[df.isin(['barras']).any(axis=1)]
+                cpxll,cpyll = int(dfbars.iloc[0,2]), int(dfbars.iloc[0,3])#xmax,ymax
+                xul,yul = int(dfbars.iloc[0,0]), int(dfbars.iloc[0,1])#xmin,ymin:superior left point in the code bar deteced
+                cpxul,cpyul = cpxll,yul #superior left point in the bar code detected
+                #detected points in the telmex logo
+                xtur,ytur = int(dftel.iloc[0,2]), int(dftel.iloc[0,3])#xmax,ymax
+                cpxur,cpyur = int(dftel.iloc[0,0]), int(dftel.iloc[0,1])#xmin,ymin
+                cpxlr, cpylr = cpxur, cpyll
+                distx = cpxul-xul
+            
+                #cv2.circle(self.image,(cpxll,cpyll),7,(0,255,0),5)
+                # cv2.circle(self.image,(cpxul,cpyul),7,(0,255,0),5)
+                # cv2.circle(self.image,(cpxur,cpyur),7,(0,255,0),5)
+                # cv2.circle(self.image,(cpxlr,cpylr),7,(0,255,0),5)
 
+                #crop the image using the points obtained before
+                ajust = int(self.image.shape[0]*0.02)
+                points = np.array([(cpxul-ajust, cpyul), (cpxur-distx, cpyur), (cpxlr-distx, cpylr), (cpxll-ajust, cpyll)], np.int32)
+                mask = np.zeros_like(self.image)
+                cv2.fillPoly(mask, [points], (255, 255, 255))
+                result = cv2.bitwise_and(self.image, mask)
+                x, y, w, h = cv2.boundingRect(points)
+                #croped image
+                result = result[y:y+h, x:x+w]
+                #result = cv2.resize(result, (w, h))
+                return result
 
-path = 'dataset2/IMG_20230418_115707.jpg'
+    def image_to_text(self,image):
+        # # Perform thresholding to create a binary image
+        cv2.imshow("image",image)
+        # # Perform OCR using Tesseract
+        text = pytesseract.image_to_string(image,lang='spa')
+        print(text)
+        cv2.waitKey(10000)
+        cv2.destroyAllWindows()
+
+#path = 'dataset2/IMG_20230418_115707.jpg'
 #path = 'dataset2/IMG_20230418_115625.jpg'
+path = 'dataset2/30564823_0.jpg'
 detector = text_detector()
-detector.cut_cfe_vertical(detector.detect_elements(path))
-#print(detector.logo["file"])
+#img = detector.cut_telmex_horizontal(detector.detect_elements(path))
+#detector.image_to_text(img)
+img = detector.cut_cfe_vertical(detector.detect_elements(path))
+detector.image_to_text(img)
+# detector.detect_elements(path)
+# detector.turn_image(detector.image)
