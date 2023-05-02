@@ -16,7 +16,7 @@ class text_detector():
         #load the yoloV5 model to detect key points in the image
         self.model = torch.hub.load('/home/isaac/Isaac/Xira/CFE_data_extraction/yolov5', 'custom', path='/home/isaac/Isaac/Xira/CFE_data_extraction/yolov5/weights/yolov5s_telmex.pt',source='local')
         #python dictionary with information about the cfe or telmex logo detected
-        self.logo = None
+        self.file_info = None
         self.image=None
 
     def detect_elements(self,image_path):
@@ -32,40 +32,101 @@ class text_detector():
         for bar in data:
             new_row = {'xmin': bar.polygon[0][0],'ymin': bar.polygon[0][1],'xmax': bar.polygon[2][0],'ymax': bar.polygon[2][1],'confidence':bar.quality,'class':3,'name': bar.type}
             info.loc[len(info)] = new_row
+        print("Elementos detectados en la imagen")
         return info
 
     def identify_file(self,df):
         #this function indentify if the file is telmex or cfe document and return a tuple
         #of a pandas data frame with all the information about the object detected with the yolo network 
         #also calculate the orientation of the logo
-
+        
         if df is not None:
             #in this line left only the information about cfe or telmex logo and
-            #extract the code bars info
-            df2 = df.loc[df['name']!='barras']
+            #extract the code bars, QR and CODE128 info
+            print("identificando archivo")
+            df2 = df.loc[df['name'].isin(['cfe', 'telmex'])]
+            df_elements = df.loc[df['name'].isin(['barras', 'QRCODE','CODE128'])]
             #if the model detects more than one logo we keep the logo with the bigest confidence
+            id_elem = df_elements['confidence'].idxmax()
+            df_elements = df.iloc[id_elem]
+            print(df_elements)
             idx = df2['confidence'].idxmax()
             file = df2.loc[idx,'name']
             df3 = df2.loc[idx]
+            print(df)
             #calculate the aspect ratio of the logo to know if the image is horizontal or vertical
-            asptec_ratio = (df3['xmax']-df3['xmin'])/(df3['ymax']-df3['ymin'])
+            xdist, ydist = (df3.iloc[2]-df3.iloc[0]),(df3.iloc[3]-df3.iloc[1])#(xmax-xmin/ymax-ymin)
+            print(xdist,ydist)
             if file == 'cfe':
-                #we define a 15% error for the aspect ratio
-                if 2.3 > asptec_ratio > 1.7:
-                    orientation = 'horizontal'
-                if 0.571 > asptec_ratio > 0.425:
-                    orientation = 'vertical'
+                #we define a 25% error for the aspect ratio
+                #cfe orientation cases
+                if xdist > ydist:
+                    logo = 'horizontal'
+                    if df.isin(['QRCODE']).any().any():
+                        dfqr = df.loc[df['name']== 'QRCODE']
+                        yqlr = int(dfqr.iloc[0,3])#ymax is the lower rigth point in the qr code
+                        yc = int(df3.iloc[3])#ymax is the lower rigth point in the cfe logo
+                        dist = yqlr-yc
+                        if dist > 0:
+                            orientation = 'vertical_up'
+                        else: 
+                            orientation = 'vertical_down'
+                        self.file_info = {"data":df3,"orientation":orientation,"file":file}
+                        return self.file_info
+                    
+                    if df.isin(['barras']).any().any():
+                        dfqr = df.loc[df['name']== 'barras']
+                        yqlr = int(dfqr.iloc[0,3])#ymax is the lower rigth point in the barcode
+                        yc = int(df3.iloc[3])#ymax is the lower rigth point in the cfe logo
+                        dist = yqlr-yc
+                        if dist > 0:
+                            orientation = 'vertical_up'
+                        else: 
+                            orientation = 'vertical_down'
+                        self.file_info = {"data":df3,"orientation":orientation,"file":file}
+                        return self.file_info
+                    else:
+                        orientation='vertical_up'
+                        self.file_info = {"data":df3,"orientation":orientation,"file":file}
+                        return self.file_info
+                #the logo is vertical
+                if xdist < ydist:
+                    logo = 'vertical'
+                    if df.isin(['QRCODE']).any().any():
+                        dfqr = df.loc[df['name']== 'QRCODE']
+                        xqlr = int(dfqr.iloc[0,2])#xmax is the lower rigth point in the qr code
+                        xc = int(df3.iloc[2])#ymax is the lower rigth point in the cfe logo
+                        dist = xc-xqlr
+                        print(dist)
+                        if dist > 0:
+                            orientation = 'horizontal_rigth'
+                        else: 
+                            orientation = 'horizontal_left'
+                        self.file_info = {"data":df3,"orientation":orientation,"file":file}
+                        return self.file_info
+                    
+                    if df.isin(['barras']).any().any():
+                        dfqr = df.loc[df['name']== 'barras']
+                        xqlr = int(dfqr.iloc[0,2])#ymax is the lower rigth point in the barcode
+                        xc = int(df3.iloc[2])#ymax is the lower rigth point in the cfe logo
+                        dist = xc-xqlr 
+                        if dist > 0:
+                            orientation = 'horizontal_rigth'
+                        else: 
+                            orientation = 'horizontal_left'
+                        self.file_info = {"data":df3,"orientation":orientation,"file":file}
+                        return self.file_info
                 else:
                     return "detection not confidence"
-            else:
-                if 1.955 > asptec_ratio > 1.445:
-                    orientation='horizontal'
-                if 0.646 > asptec_ratio > 0.477:
-                    orientation='vertical'
+            else: #if it is not cfe is telmex
+                if xdist>ydist:
+                    logo='horizontal'
+                if xdist<ydist:
+                    logo='vertical'
                 else:
                     return "detection not confidence"
-            self.logo = {"data":df3,"orientation":orientation,"file":file}
-            return self.logo
+            
+            
         else:
             print('No se ha detectado ningun recibo')
     
@@ -73,8 +134,8 @@ class text_detector():
         #get the cut points for the first image that contains the name and addres
         
         dfCFE = df.loc[df['name']== 'cfe']
-        xclr,yclr = int(dfCFE.iloc[0,2]),int(dfCFE.iloc[0,3])
-        xcul,ycul = int(dfCFE.iloc[0,0]),int(dfCFE.iloc[0,1])
+        xclr,yclr = int(dfCFE.iloc[0,2]),int(dfCFE.iloc[0,3])#xmax, ymax
+        xcul,ycul = int(dfCFE.iloc[0,0]),int(dfCFE.iloc[0,1])#xmin, ymin
         xcll,ycll = xcul, yclr
         xcur,ycur = xclr, ycul
         #width and heigth of the CFE logo
@@ -82,7 +143,7 @@ class text_detector():
         cfe_width = xcur-xcul
         #edge points 
         xcpul,ycpul = int(xcll-(cfe_width*0.5)),int(ycll+(cfe_higth*0.5))
-        xcplr,ycplr = int(xclr+cfe_width), int(ycpul+(1.7*cfe_higth))
+        xcplr,ycplr = int(xclr+(cfe_width*1.5)), int(ycpul+(1.9*cfe_higth))
         xcpur,ycpur = xcplr,ycpul
         xcpll,ycpll = xcpul, ycplr
         
@@ -109,26 +170,30 @@ class text_detector():
             xqur, yqur = xqlr , yqul
             QR_hight = yqlr-yqul
             print(QR_hight/cfe_higth)
+         
+    def turn_image(self,image,orientation):
+        if orientation=='horizontal_rigth':
+            transposed = cv2.transpose(image)
+            vertical = cv2.flip(transposed,0)#0= turn the image 90°, 1 turn the image -90°
+            detect = self.model(vertical)
+            new_df = detect.pandas().xyxy[0] 
+            return vertical,new_df
+         
+        if orientation=='horizontal_left':
+            transposed = cv2.transpose(image)
+            vertical = cv2.flip(transposed,1)#0= turn the image 90°, 1 turn the image -90°
+            detect = self.model(vertical)
+            new_df = detect.pandas().xyxy[0] 
+            return vertical,new_df
         
-    
-    def find_point(self,alpha,beta,gama,point1,point2):
-        #xc=point2[0],yc=point2[1],xq=point1[0],yq=point1[1]
-        ma =  (point1[1]-point2[1])/(point1[0]-point2[0])
-        slope = lambda angle,m1: (tan(angle)+m1)/(1-(tan(angle)*m1))
-        mc = slope(beta,ma)
-        mb = slope(180-gama,mc)
-        print(ma,mb,mc)
-        # xi = int(((-mb*point2[0])+point2[1]-point1[1]+(mc*point1[0]))/(mc-mb))
-        # yi = int((mb*xi)+(-mb*point2[0])+point2[1])
-        # #print(xi,yi)
-        # return xi,-yi
-
-    def turn_image(self,image):
-        transposed = cv2.transpose(image)
-        vertical = cv2.flip(transposed,0)#0= turn the image 90°, 1 turn the image -90°
-        cv2.imshow('image',vertical)
-        cv2.waitKey(10000)
-        cv2.destroyAllWindows()
+        if orientation=='vertical_down':
+            transposed = cv2.transpose(image)
+            vertical1 = cv2.flip(transposed,0)#0= turn the image 90°, 1 turn the image -90°
+            transposed2= cv2.transpose(vertical1,0)
+            vertical2 = cv2.flip(transposed2,0)
+            detect = self.model(vertical2)
+            new_df = detect.pandas().xyxy[0] 
+            return vertical2,new_df
 
     def cut_telmex_vertical(self,df):
         if df.isin(['telmex']).any().any():
@@ -219,13 +284,17 @@ class text_detector():
         cv2.waitKey(10000)
         cv2.destroyAllWindows()
 
-#path = 'dataset2/IMG_20230418_115707.jpg'
-#path = 'dataset2/IMG_20230418_115625.jpg'
-path = 'dataset2/30564823_0.jpg'
+#path = 'dataset2/30564036_1-3.jpg'
+path = 'dataset2/IMG_20230418_115640.jpg'
+#path = 'dataset2/12.jpg'
 detector = text_detector()
 #img = detector.cut_telmex_horizontal(detector.detect_elements(path))
 #detector.image_to_text(img)
-img = detector.cut_cfe_vertical(detector.detect_elements(path))
-detector.image_to_text(img)
-# detector.detect_elements(path)
-# detector.turn_image(detector.image)
+# img = detector.cut_cfe_vertical(detector.detect_elements(path))
+# detector.image_to_text(img)
+detector.identify_file(detector.detect_elements(path))
+print(detector.file_info)
+#image,df = detector.turn_image(detector.image,'vertical_down')
+# cv2.imshow("image",image)
+# cv2.waitKey(10000)
+# cv2.destroyAllWindows()
